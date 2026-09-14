@@ -42,6 +42,7 @@ Item {
   }
 
   function applyStatus(output) {
+    var wasAvailable = root.available
     var fields = String(output || "").trim().split("\t")
     if (fields.length < 6 || fields[0] !== "available") {
       root.available = false
@@ -60,6 +61,7 @@ Item {
     root.percent = Math.max(0, Math.min(100, parseInt(fields[4], 10) || 0))
     root.autoBlanked = fields[5] === "1"
     root.lastError = ""
+    if (!wasAvailable) console.log("keylight ready device=" + root.deviceName + " timeout=" + root.idleTimeout)
   }
 
   function enqueue(action) {
@@ -92,7 +94,10 @@ Item {
     if (!idleBlankingEnabled && autoBlanked) enqueue("idle-restore")
   }
 
-  Component.onCompleted: Qt.callLater(refresh)
+  Component.onCompleted: {
+    console.log("keylight service starting")
+    Qt.callLater(refresh)
+  }
 
   IdleMonitor {
     id: idleMonitor
@@ -100,6 +105,7 @@ Item {
     timeout: root.idleTimeout
     respectInhibitors: false
     onIsIdleChanged: {
+      console.log("keylight activity=" + (isIdle ? "idle" : "active"))
       if (isIdle) root.enqueue("idle-off")
       else root.enqueue("idle-restore")
     }
