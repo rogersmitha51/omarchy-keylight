@@ -1,16 +1,10 @@
 # Keylight
 
-Keylight gives keyboard backlights Apple-style inactivity behavior in Omarchy. It turns a lit keyboard off after the configured idle period and restores the exact previous level on the next keyboard, pointer, or touchpad activity. Manual off remains off.
+Keylight controls your keyboard backlight in Omarchy.
 
-The plugin works with any keyboard backlight exposed by Linux under `/sys/class/leds/` with `kbd_backlight` in its device name.
+After 5 seconds without input, the light turns off. Start typing or move the pointer and Keylight restores the previous brightness. If you turn the light off yourself, it stays off.
 
-## Requirements
-
-- Omarchy Quattro with shell plugins
-- `brightnessctl` (included with Omarchy)
-- A compatible keyboard-backlight LED device
-
-Keylight uses Quickshell's Wayland `IdleMonitor`; it does not read raw input devices, run another Quickshell process, request elevated privileges, or access the network.
+The keyboard icon is green while the light is on and uses the normal bar color while it is off.
 
 ## Install
 
@@ -20,45 +14,42 @@ omarchy plugin add https://github.com/rogersmitha51/omarchy-keylight.git --enabl
 
 ## Controls
 
-| Input | Action |
-|---|---|
-| Left click | Cycle brightness and off |
-| Scroll | Increase or decrease brightness |
-| Middle click | Toggle off or restore the last manual level |
-| Right click | Turn off and keep it off |
+- **Left click:** Cycle brightness
+- **Scroll:** Adjust brightness
+- **Middle click:** Toggle on or off
+- **Right click:** Turn off
 
-By default, Keylight turns off a lit keyboard after five seconds without user input. Activity restores it only when Keylight performed the automatic shutdown.
+## Change the timeout
 
-## Configure
+This example changes the timeout to 30 seconds:
 
 ```sh
-omarchy bar set io.github.rogersmitha51.keylight idleBlanking true
-omarchy bar set io.github.rogersmitha51.keylight idleTimeout 5
-omarchy bar set io.github.rogersmitha51.keylight device kbd_backlight
+omarchy bar set io.github.rogersmitha51.keylight idleTimeout 30
 ```
 
-The device setting is optional. With no explicit device, Keylight selects the first `*kbd_backlight*` device.
+The minimum is 5 seconds.
 
-## State and permissions
+## Compatibility
 
-Keylight writes only through `brightnessctl` with normal user permissions. Its remembered manual and same-boot idle state is stored in:
+Keylight works with keyboard backlights exposed by Linux as a `*kbd_backlight*` device.
 
-```text
-${XDG_STATE_HOME:-~/.local/state}/keylight/
-```
-
-The directory and files are restricted to the current user. Automatic restoration markers include the kernel boot ID and are ignored after reboot.
-
-## Development
+Check your hardware:
 
 ```sh
-omarchy plugin validate .
-qmllint -I "$OMARCHY_PATH/shell" Service.qml BarWidget.qml
-python3 -m unittest discover -s tests -v
+brightnessctl --list
 ```
+
+`brightnessctl` is included with Omarchy. Keylight runs as your normal user and does not need root access.
 
 ## Remove
 
 ```sh
 omarchy plugin remove io.github.rogersmitha51.keylight
+```
+
+## Development
+
+```sh
+omarchy plugin validate .
+python3 -m unittest discover -s tests -v
 ```
