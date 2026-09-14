@@ -28,7 +28,7 @@ BarWidget {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: "󰌌"
+    text: "󰌵"
     active: root.keylight ? root.keylight.brightness > 0 : false
     dimmed: !root.keylight || !root.keylight.available
     tooltipText: {
