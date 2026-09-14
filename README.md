@@ -1,6 +1,6 @@
 # Keylight
 
-Keylight controls your keyboard backlight in Omarchy.
+Keylight gives Omarchy the familiar Apple MacBook keyboard-backlight behavior.
 
 After 5 seconds without input, the light turns off. Start typing or move the pointer and Keylight restores the previous brightness. If you turn the light off yourself, it stays off.
 
