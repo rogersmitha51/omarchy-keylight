@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.rogersmitha51.keylight",
+  "name": "Keylight",
+  "version": "0.1.0",
+  "author": "rogersmitha51",
+  "license": "MIT",
+  "description": "Apple-style keyboard backlight behavior with inactivity blanking, activity restoration, and manual controls.",
+  "kinds": [
+    "service",
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Keylight",
+    "description": "Automatically blank and restore a keyboard backlight, with manual brightness controls.",
+    "category": "Hardware",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "device": "",
+      "idleBlanking": true,
+      "idleTimeout": 5,
+      "refreshInterval": 2000
+    },
+    "schema": [
+      {
+        "key": "device",
+        "type": "string",
+        "label": "Keyboard backlight device",
+        "description": "Optional brightnessctl device name; blank automatically selects the first *kbd_backlight* device."
+      },
+      {
+        "key": "idleBlanking",
+        "type": "boolean",
+        "label": "Turn off after inactivity",
+        "defaultValue": true
+      },
+      {
+        "key": "idleTimeout",
+        "type": "integer",
+        "label": "Inactivity timeout (seconds)",
+        "min": 5,
+        "max": 3600,
+        "step": 5,
+        "defaultValue": 5
+      },
+      {
+        "key": "refreshInterval",
+        "type": "integer",
+        "label": "Hardware refresh interval (milliseconds)",
+        "min": 500,
+        "max": 60000,
+        "step": 500,
+        "defaultValue": 2000
+      }
+    ]
+  }
+}

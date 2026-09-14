@@ -1,0 +1,243 @@
+#!/usr/bin/env bash
+
+set -u
+
+action="${1:-status}"
+requested_device="${2:-${KEYLIGHT_DEVICE:-}}"
+sysfs_root="${KEYLIGHT_SYSFS_ROOT:-/sys/class/leds}"
+brightnessctl_bin="${BRIGHTNESSCTL:-brightnessctl}"
+boot_id_path="${KEYLIGHT_BOOT_ID_PATH:-/proc/sys/kernel/random/boot_id}"
+
+if [[ -n ${KEYLIGHT_STATE_HOME:-} ]]; then
+  state_root="$KEYLIGHT_STATE_HOME"
+elif [[ -n ${XDG_STATE_HOME:-} ]]; then
+  state_root="$XDG_STATE_HOME/keylight"
+elif [[ -n ${HOME:-} ]]; then
+  state_root="$HOME/.local/state/keylight"
+else
+  state_root=""
+fi
+
+fail() {
+  printf 'keylight: %s\n' "$*" >&2
+  exit 1
+}
+
+find_device() {
+  if [[ -n $requested_device ]]; then
+    [[ $requested_device != */* ]] || fail "device must be a brightnessctl device name"
+    [[ -d "$sysfs_root/$requested_device" ]] || return 1
+    printf '%s\n' "$requested_device"
+    return 0
+  fi
+
+  local candidate
+  shopt -s nullglob
+  for candidate in "$sysfs_root"/*kbd_backlight*; do
+    [[ -d $candidate ]] || continue
+    basename "$candidate"
+    return 0
+  done
+  return 1
+}
+
+read_integer() {
+  local path="$1" value
+  [[ -r $path ]] || return 1
+  read -r value < "$path" || return 1
+  [[ $value =~ ^[0-9]+$ ]] || return 1
+  printf '%s\n' "$value"
+}
+
+read_boot_id() {
+  local value
+  [[ -r $boot_id_path ]] || return 1
+  read -r value < "$boot_id_path" || return 1
+  [[ $value =~ ^[A-Za-z0-9-]+$ ]] || return 1
+  printf '%s\n' "$value"
+}
+
+device="$(find_device)" || {
+  printf 'unavailable\n'
+  exit 3
+}
+device_path="$sysfs_root/$device"
+maximum="$(read_integer "$device_path/max_brightness")" || fail "cannot read $device/max_brightness"
+(( maximum > 0 )) || fail "$device reports an invalid maximum brightness"
+
+safe_device="${device//[^A-Za-z0-9_.-]/_}"
+last_file=""
+idle_file=""
+if [[ -n $state_root ]]; then
+  last_file="$state_root/$safe_device.last"
+  idle_file="$state_root/$safe_device.idle"
+fi
+
+current_brightness() {
+  read_integer "$device_path/brightness" || fail "cannot read $device/brightness"
+}
+
+ensure_state_directory() {
+  [[ -n $state_root ]] || fail "no private state root is available"
+  umask 077
+  mkdir -p -- "$state_root" || fail "cannot create state directory"
+  [[ ! -L $state_root && -d $state_root ]] || fail "state path must be a real directory"
+
+  local owner mode mode_value
+  owner="$(stat -c '%u' -- "$state_root")" || fail "cannot inspect state directory owner"
+  mode="$(stat -c '%a' -- "$state_root")" || fail "cannot inspect state directory permissions"
+  [[ $owner == "$EUID" && $mode =~ ^[0-7]+$ ]] || fail "state directory has invalid ownership or permissions"
+  mode_value=$((8#$mode))
+  (( (mode_value & 0700) == 0700 && (mode_value & 0077) == 0 )) \
+    || fail "state directory must be owner-only"
+
+  [[ ! -d $last_file && ! -d $idle_file ]] || fail "state file path must not be a directory"
+}
+
+atomic_write() {
+  local destination="$1" value="$2" temporary
+  temporary="$(mktemp "$state_root/.keylight.XXXXXX")" || fail "cannot create temporary state"
+  printf '%s\n' "$value" > "$temporary" || {
+    rm -f -- "$temporary"
+    fail "cannot write state"
+  }
+  chmod 600 "$temporary" || {
+    rm -f -- "$temporary"
+    fail "cannot protect state"
+  }
+  mv -fT -- "$temporary" "$destination" || {
+    rm -f -- "$temporary"
+    fail "cannot replace state"
+  }
+}
+
+safe_read_file() {
+  local path="$1"
+  [[ -f $path && ! -L $path ]] || return 1
+  dd if="$path" iflag=nonblock,nofollow status=none bs=128 count=1 2>/dev/null
+}
+
+remember_last() {
+  local value="$1"
+  (( value > 0 && value <= maximum )) || return 0
+  atomic_write "$last_file" "$value"
+}
+
+saved_last() {
+  local value
+  if value="$(safe_read_file "$last_file")" \
+    && [[ $value =~ ^[0-9]+$ ]] && (( value > 0 && value <= maximum )); then
+    printf '%s\n' "$value"
+  else
+    printf '%s\n' "$maximum"
+  fi
+}
+
+write_idle_marker() {
+  local value="$1" boot_id
+  boot_id="$(read_boot_id)" || fail "cannot read boot ID"
+  atomic_write "$idle_file" "$boot_id $value"
+}
+
+saved_idle() {
+  local marker boot_id saved_boot value
+  marker="$(safe_read_file "$idle_file")" || return 1
+  [[ $marker =~ ^([A-Za-z0-9-]+)[[:space:]]+([0-9]+)$ ]] || return 1
+  saved_boot="${BASH_REMATCH[1]}"
+  value="${BASH_REMATCH[2]}"
+  boot_id="$(read_boot_id)" || return 1
+  [[ $saved_boot == "$boot_id" ]] || return 1
+  (( value > 0 && value <= maximum )) || return 1
+  printf '%s\n' "$value"
+}
+
+clear_idle_marker() {
+  rm -f -- "$idle_file" || fail "cannot clear idle state"
+}
+
+set_brightness() {
+  local value="$1"
+  (( value < 0 )) && value=0
+  (( value > maximum )) && value="$maximum"
+  "$brightnessctl_bin" -q -d "$device" set "$value" >/dev/null \
+    || fail "brightnessctl could not set $device"
+  (( value > 0 )) && remember_last "$value"
+}
+
+print_status() {
+  local current percent auto=0
+  current="$(current_brightness)"
+  percent=$(( (current * 100 + maximum / 2) / maximum ))
+  if [[ -n $state_root && -d $state_root && ! -L $state_root ]] && saved_idle >/dev/null 2>&1; then
+    auto=1
+  fi
+  printf 'available\t%s\t%s\t%s\t%s\t%s\n' "$device" "$current" "$maximum" "$percent" "$auto"
+}
+
+case "$action" in
+  status)
+    print_status
+    exit 0
+    ;;
+  toggle|off|up|down|cycle|idle-off|idle-restore|idle-reset)
+    ensure_state_directory
+    ;;
+  *)
+    fail "unknown action '$action'"
+    ;;
+esac
+
+case "$action" in
+  idle-off)
+    current="$(current_brightness)"
+    if (( current > 0 )); then
+      remember_last "$current"
+      write_idle_marker "$current"
+      set_brightness 0
+    fi
+    ;;
+  idle-restore)
+    if saved="$(saved_idle)"; then
+      current="$(current_brightness)"
+      if (( current == 0 )); then
+        set_brightness "$saved"
+      fi
+    fi
+    clear_idle_marker
+    ;;
+  idle-reset)
+    clear_idle_marker
+    ;;
+  toggle)
+    clear_idle_marker
+    current="$(current_brightness)"
+    if (( current > 0 )); then
+      remember_last "$current"
+      set_brightness 0
+    else
+      set_brightness "$(saved_last)"
+    fi
+    ;;
+  off)
+    clear_idle_marker
+    current="$(current_brightness)"
+    (( current > 0 )) && remember_last "$current"
+    set_brightness 0
+    ;;
+  up|down|cycle)
+    clear_idle_marker
+    current="$(current_brightness)"
+    step=$(( maximum / 10 ))
+    (( step < 1 )) && step=1
+    case "$action" in
+      up) next=$(( current + step )) ;;
+      down) next=$(( current - step )) ;;
+      cycle)
+        if (( current >= maximum )); then next=0; else next=$(( current + step )); fi
+        ;;
+    esac
+    set_brightness "$next"
+    ;;
+esac
+
+print_status
