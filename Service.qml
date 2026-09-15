@@ -17,6 +17,7 @@ Item {
   property bool autoBlanked: false
   property string lastError: ""
   property var actionQueue: []
+  property bool restoreAfterUnlock: false
 
   readonly property string helperPath: decodeURIComponent(String(Qt.resolvedUrl("bin/keylight")).replace(/^file:\/\//, ""))
   readonly property string configuredDevice: String(setting("device", "") || "").trim()
@@ -89,10 +90,31 @@ Item {
   function increase() { enqueue("up") }
   function decrease() { enqueue("down") }
   function refresh() { enqueue("status") }
+  function checkLockState() {
+    if (!root.restoreAfterUnlock || lockStateReader.running) return
+    lockStateReader.outputText = ""
+    lockStateReader.running = true
+  }
+
+  function handleActivity(isIdle) {
+    console.log("keylight activity=" + (isIdle ? "idle" : "active"))
+    if (isIdle) {
+      root.restoreAfterUnlock = false
+      unlockPoll.stop()
+      root.enqueue("idle-off")
+    } else {
+      root.restoreAfterUnlock = true
+      root.checkLockState()
+    }
+  }
 
   onConfiguredDeviceChanged: refresh()
   onIdleBlankingEnabledChanged: {
-    if (!idleBlankingEnabled && autoBlanked) enqueue("idle-restore")
+    if (!idleBlankingEnabled) {
+      restoreAfterUnlock = false
+      unlockPoll.stop()
+      if (autoBlanked) enqueue("idle-restore")
+    }
   }
 
   Component.onCompleted: {
@@ -105,11 +127,7 @@ Item {
     enabled: root.idleBlankingEnabled && root.available
     timeout: root.idleTimeout
     respectInhibitors: false
-    onIsIdleChanged: {
-      console.log("keylight activity=" + (isIdle ? "idle" : "active"))
-      if (isIdle) root.enqueue("idle-off")
-      else root.enqueue("idle-restore")
-    }
+    onIsIdleChanged: root.handleActivity(isIdle)
   }
 
   Timer {
@@ -118,6 +136,32 @@ Item {
     repeat: true
     onTriggered: root.refresh()
   }
+  Timer {
+    id: unlockPoll
+    interval: 250
+    repeat: false
+    onTriggered: root.checkLockState()
+  }
+
+  Process {
+    id: lockStateReader
+    property string outputText: ""
+    command: ["omarchy-shell", "lock", "isLocked"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: lockStateReader.outputText = text
+    }
+    onExited: function(exitCode) {
+      if (!root.restoreAfterUnlock) return
+      if (exitCode === 0 && String(outputText || "").trim() === "true") {
+        unlockPoll.restart()
+      } else {
+        root.restoreAfterUnlock = false
+        root.enqueue("idle-restore")
+      }
+    }
+  }
+
 
   Process {
     id: worker
