@@ -19,15 +19,25 @@ omarchy plugin add https://github.com/rogersmitha51/omarchy-keylight.git --enabl
 - **Middle click:** Toggle on or off
 - **Right click:** Turn off
 
-## Change the timeout
+## Settings
 
-This example changes the timeout to 30 seconds:
+Change settings with `omarchy bar set io.github.rogersmitha51.keylight KEY VALUE`.
 
 ```sh
+# Turn off after 30 seconds of inactivity
 omarchy bar set io.github.rogersmitha51.keylight idleTimeout 30
+
+# Disable automatic inactivity blanking
+omarchy bar set io.github.rogersmitha51.keylight idleBlanking false
+
+# Use a specific device from brightnessctl --list
+omarchy bar set io.github.rogersmitha51.keylight device DEVICE_NAME
+
+# Poll hardware brightness every 5 seconds
+omarchy bar set io.github.rogersmitha51.keylight refreshInterval 5000
 ```
 
-The minimum is 5 seconds.
+`idleTimeout` accepts 5–3600 seconds. `refreshInterval` accepts 500–60000 milliseconds. Leave `device` empty to select the first `*kbd_backlight*` device automatically.
 
 ## Compatibility
 

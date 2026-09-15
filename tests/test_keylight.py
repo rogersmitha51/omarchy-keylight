@@ -2,6 +2,7 @@ import os
 import pathlib
 import subprocess
 import tempfile
+import time
 import unittest
 
 
@@ -31,6 +32,12 @@ set -eu
 device=$2
 shift 2
 [[ ${1:-} == set ]] || exit 64
+printf '%s\t%s\n' "$device" "$2" >> "$FAKE_CALL_LOG"
+if [[ -n ${FAKE_BLOCK_ON_ZERO:-} && $2 == 0 ]]; then
+  touch "$FAKE_BLOCK_ON_ZERO.started"
+  while [[ ! -e $FAKE_BLOCK_ON_ZERO.release ]]; do sleep 0.01; done
+fi
+[[ -z ${FAKE_FAIL_SET:-} ]] || exit 1
 printf '%s\n' "$2" > "$FAKE_SYSFS_ROOT/$device/brightness"
 """,
             encoding="utf-8",
@@ -44,20 +51,27 @@ printf '%s\n' "$2" > "$FAKE_SYSFS_ROOT/$device/brightness"
                 "KEYLIGHT_BOOT_ID_PATH": str(self.boot_id),
                 "BRIGHTNESSCTL": str(self.fake_brightnessctl),
                 "FAKE_SYSFS_ROOT": str(self.sysfs),
+                "FAKE_CALL_LOG": str(self.root / "brightnessctl.log"),
             }
         )
 
-    def add_device(self, brightness=128, maximum=255):
-        device = self.sysfs / "test::kbd_backlight"
+    def add_device(self, brightness=128, maximum=255, name="test::kbd_backlight"):
+        device = self.sysfs / name
         device.mkdir()
         (device / "brightness").write_text(f"{brightness}\n", encoding="utf-8")
         (device / "max_brightness").write_text(f"{maximum}\n", encoding="utf-8")
         return device
 
-    def run_helper(self, action="status", check=True):
+    def run_helper(self, action="status", check=True, device=None, extra_env=None):
+        command = [str(HELPER), action]
+        if device is not None:
+            command.append(device)
+        environment = self.env.copy()
+        if extra_env:
+            environment.update(extra_env)
         return subprocess.run(
-            [str(HELPER), action],
-            env=self.env,
+            command,
+            env=environment,
             check=check,
             text=True,
             capture_output=True,
@@ -121,6 +135,87 @@ printf '%s\n' "$2" > "$FAKE_SYSFS_ROOT/$device/brightness"
 
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(self.brightness(device), 73)
+
+    def test_failed_idle_off_does_not_leave_restore_marker(self):
+        device = self.add_device(brightness=87)
+
+        result = self.run_helper(
+            "idle-off", check=False, extra_env={"FAKE_FAIL_SET": "1"}
+        )
+        status = self.run_helper()
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.brightness(device), 87)
+        self.assertTrue(status.stdout.rstrip().endswith("\t0"))
+
+    def test_noop_adjustment_preserves_idle_restore(self):
+        device = self.add_device(brightness=87)
+
+        self.run_helper("idle-off")
+        self.run_helper("down")
+        self.run_helper("idle-restore")
+
+        self.assertEqual(self.brightness(device), 87)
+
+    def test_brightness_read_failure_does_not_touch_hardware(self):
+        device = self.add_device(brightness=87)
+        brightness_path = device / "brightness"
+        brightness_path.chmod(0)
+        try:
+            result = self.run_helper("up", check=False)
+        finally:
+            brightness_path.chmod(0o644)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.root / "brightnessctl.log").exists())
+        self.assertEqual(self.brightness(device), 87)
+
+    def test_explicit_device_is_selected_and_traversal_is_rejected(self):
+        selected = self.add_device(name="vendor::kbd_backlight")
+        self.add_device(name="other::kbd_backlight")
+
+        result = self.run_helper(device="vendor::kbd_backlight")
+        traversal = self.run_helper(device="..", check=False)
+
+        self.assertIn("\tvendor::kbd_backlight\t", result.stdout)
+        self.assertEqual(self.brightness(selected), 128)
+        self.assertNotEqual(traversal.returncode, 0)
+
+    def test_concurrent_manual_change_wins_over_idle_off(self):
+        device = self.add_device(brightness=87)
+        gate = self.root / "idle-gate"
+        environment = self.env.copy()
+        environment["FAKE_BLOCK_ON_ZERO"] = str(gate)
+
+        idle = subprocess.Popen(
+            [str(HELPER), "idle-off"],
+            env=environment,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        deadline = time.monotonic() + 5
+        while not gate.with_suffix(".started").exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertTrue(gate.with_suffix(".started").exists())
+
+        manual = subprocess.Popen(
+            [str(HELPER), "up"],
+            env=self.env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        gate.with_suffix(".release").touch()
+        idle.communicate(timeout=5)
+        manual.communicate(timeout=5)
+        self.assertEqual(idle.returncode, 0)
+        self.assertEqual(manual.returncode, 0)
+
+        changed = self.brightness(device)
+        self.run_helper("idle-restore")
+        self.assertGreater(changed, 0)
+        self.assertEqual(self.brightness(device), changed)
 
 
 if __name__ == "__main__":

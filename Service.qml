@@ -18,7 +18,7 @@ Item {
   property string lastError: ""
   property var actionQueue: []
 
-  readonly property string helperPath: String(Qt.resolvedUrl("bin/keylight")).replace(/^file:\/\//, "")
+  readonly property string helperPath: decodeURIComponent(String(Qt.resolvedUrl("bin/keylight")).replace(/^file:\/\//, ""))
   readonly property string configuredDevice: String(setting("device", "") || "").trim()
   readonly property bool idleBlankingEnabled: setting("idleBlanking", true) === true
   readonly property int idleTimeout: boundedInteger("idleTimeout", 5, 5, 3600)
@@ -78,6 +78,7 @@ Item {
     var action = queue.shift()
     root.actionQueue = queue
     worker.action = action
+    worker.startedSuccessfully = false
     worker.command = root.commandFor(action)
     worker.running = true
   }
@@ -123,6 +124,7 @@ Item {
     property string action: ""
     property string outputText: ""
     property string errorText: ""
+    property bool startedSuccessfully: false
 
     stdout: StdioCollector {
       waitForEnd: true
@@ -133,13 +135,22 @@ Item {
       onStreamFinished: worker.errorText = text
     }
     onStarted: {
+      startedSuccessfully = true
       outputText = ""
       errorText = ""
     }
+    onRunningChanged: {
+      if (running || action === "" || startedSuccessfully) return
+      root.lastError = "Keylight helper could not be started"
+      action = ""
+      Qt.callLater(root.startNext)
+    }
     onExited: function(exitCode, exitStatus) {
+      var completedAction = action
+      action = ""
       if (exitCode === 0) root.applyStatus(outputText)
       else if (exitCode === 3) root.applyStatus("unavailable")
-      else root.lastError = String(errorText || ("Keylight action failed: " + worker.action)).trim()
+      else root.lastError = String(errorText || ("Keylight action failed: " + completedAction)).trim()
       Qt.callLater(root.startNext)
     }
   }

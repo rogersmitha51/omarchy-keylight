@@ -20,7 +20,7 @@ BarWidget {
   onSettingsChanged: syncSettings()
   Component.onCompleted: Qt.callLater(syncSettings)
 
-  visible: keylight ? keylight.available : false
+  visible: root.keylight !== null
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
@@ -35,6 +35,7 @@ BarWidget {
     tooltipText: {
       if (!root.keylight) return "Keylight unavailable"
       if (root.keylight.lastError) return root.keylight.lastError
+      if (!root.keylight.available) return "Keyboard backlight unavailable"
       var state = "Keyboard backlight: " + root.keylight.percent + "%"
       if (root.keylight.idleBlankingEnabled)
         state += "\nTurns off after " + root.keylight.idleTimeout + " seconds of inactivity"

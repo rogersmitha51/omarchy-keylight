@@ -25,7 +25,8 @@ fail() {
 
 find_device() {
   if [[ -n $requested_device ]]; then
-    [[ $requested_device != */* ]] || fail "device must be a brightnessctl device name"
+    [[ $requested_device =~ ^[A-Za-z0-9_.:][A-Za-z0-9_.:-]*$ && $requested_device != "." && $requested_device != ".." ]] \
+      || fail "device must be a brightnessctl device name"
     [[ -d "$sysfs_root/$requested_device" ]] || return 1
     printf '%s\n' "$requested_device"
     return 0
@@ -68,9 +69,11 @@ maximum="$(read_integer "$device_path/max_brightness")" || fail "cannot read $de
 safe_device="${device//[^A-Za-z0-9_.-]/_}"
 last_file=""
 idle_file=""
+lock_file=""
 if [[ -n $state_root ]]; then
   last_file="$state_root/$safe_device.last"
   idle_file="$state_root/$safe_device.idle"
+  lock_file="$state_root/$safe_device.lock"
 fi
 
 current_brightness() {
@@ -91,7 +94,13 @@ ensure_state_directory() {
   (( (mode_value & 0700) == 0700 && (mode_value & 0077) == 0 )) \
     || fail "state directory must be owner-only"
 
-  [[ ! -d $last_file && ! -d $idle_file ]] || fail "state file path must not be a directory"
+  [[ ! -d $last_file && ! -d $idle_file && ! -d $lock_file ]] \
+    || fail "state file path must not be a directory"
+}
+
+acquire_lock() {
+  exec {lock_fd}> "$lock_file" || fail "cannot open state lock"
+  flock -x "$lock_fd" || fail "cannot lock state"
 }
 
 atomic_write() {
@@ -166,7 +175,7 @@ set_brightness() {
 
 print_status() {
   local current percent auto=0
-  current="$(current_brightness)"
+  current="$(current_brightness)" || exit 1
   percent=$(( (current * 100 + maximum / 2) / maximum ))
   if [[ -n $state_root && -d $state_root && ! -L $state_root ]] && saved_idle >/dev/null 2>&1; then
     auto=1
@@ -181,6 +190,7 @@ case "$action" in
     ;;
   toggle|off|up|down|cycle|idle-off|idle-restore|idle-reset)
     ensure_state_directory
+    acquire_lock
     ;;
   *)
     fail "unknown action '$action'"
@@ -189,16 +199,18 @@ esac
 
 case "$action" in
   idle-off)
-    current="$(current_brightness)"
+    current="$(current_brightness)" || exit 1
     if (( current > 0 )); then
       remember_last "$current"
       write_idle_marker "$current"
+      trap 'rm -f -- "$idle_file"' EXIT
       set_brightness 0
+      trap - EXIT
     fi
     ;;
   idle-restore)
     if saved="$(saved_idle)"; then
-      current="$(current_brightness)"
+      current="$(current_brightness)" || exit 1
       if (( current == 0 )); then
         set_brightness "$saved"
       fi
@@ -209,24 +221,23 @@ case "$action" in
     clear_idle_marker
     ;;
   toggle)
-    clear_idle_marker
-    current="$(current_brightness)"
+    current="$(current_brightness)" || exit 1
     if (( current > 0 )); then
       remember_last "$current"
       set_brightness 0
     else
       set_brightness "$(saved_last)"
     fi
+    clear_idle_marker
     ;;
   off)
-    clear_idle_marker
-    current="$(current_brightness)"
+    current="$(current_brightness)" || exit 1
     (( current > 0 )) && remember_last "$current"
     set_brightness 0
+    clear_idle_marker
     ;;
   up|down|cycle)
-    clear_idle_marker
-    current="$(current_brightness)"
+    current="$(current_brightness)" || exit 1
     step=$(( maximum / 10 ))
     (( step < 1 )) && step=1
     case "$action" in
@@ -236,7 +247,12 @@ case "$action" in
         if (( current >= maximum )); then next=0; else next=$(( current + step )); fi
         ;;
     esac
-    set_brightness "$next"
+    (( next < 0 )) && next=0
+    (( next > maximum )) && next="$maximum"
+    if (( next != current )); then
+      set_brightness "$next"
+      clear_idle_marker
+    fi
     ;;
 esac
 
