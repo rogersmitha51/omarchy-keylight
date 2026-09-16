@@ -39,6 +39,12 @@ if [[ -n ${FAKE_BLOCK_ON_ZERO:-} && $2 == 0 ]]; then
 fi
 [[ -z ${FAKE_FAIL_SET:-} ]] || exit 1
 printf '%s\n' "$2" > "$FAKE_SYSFS_ROOT/$device/brightness"
+# Stands in for the shell's wake process applying brightnessctl's stale save
+# right after an automatic restore has already written the user's level.
+if [[ -n ${FAKE_CLOBBER_AFTER_FIRST_SET:-} && ! -e ${FAKE_CLOBBER_MARKER:-/nonexistent} ]]; then
+  touch "$FAKE_CLOBBER_MARKER"
+  printf '%s\n' "$FAKE_CLOBBER_AFTER_FIRST_SET" > "$FAKE_SYSFS_ROOT/$device/brightness"
+fi
 """,
             encoding="utf-8",
         )
@@ -180,6 +186,23 @@ printf '%s\n' "$2" > "$FAKE_SYSFS_ROOT/$device/brightness"
         self.assertIn("\tvendor::kbd_backlight\t", result.stdout)
         self.assertEqual(self.brightness(selected), 128)
         self.assertNotEqual(traversal.returncode, 0)
+
+    def test_locked_blank_survives_the_shell_wake_restore(self):
+        device = self.add_device(brightness=87)
+        marker = self.root / "clobbered"
+
+        self.run_helper("idle-off")
+        restored = self.run_helper(
+            "idle-restore",
+            extra_env={
+                "FAKE_CLOBBER_AFTER_FIRST_SET": "0",
+                "FAKE_CLOBBER_MARKER": str(marker),
+            },
+        )
+
+        self.assertTrue(marker.exists())
+        self.assertEqual(restored.returncode, 0)
+        self.assertEqual(self.brightness(device), 87)
 
     def test_concurrent_manual_change_wins_over_idle_off(self):
         device = self.add_device(brightness=87)

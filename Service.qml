@@ -18,6 +18,7 @@ Item {
   property string lastError: ""
   property var actionQueue: []
   property bool restoreAfterUnlock: false
+  property bool startupChecked: false
 
   readonly property string helperPath: decodeURIComponent(String(Qt.resolvedUrl("bin/keylight")).replace(/^file:\/\//, ""))
   readonly property string configuredDevice: String(setting("device", "") || "").trim()
@@ -62,7 +63,21 @@ Item {
     root.percent = Math.max(0, Math.min(100, parseInt(fields[4], 10) || 0))
     root.autoBlanked = fields[5] === "1"
     root.lastError = ""
-    if (!wasAvailable) console.log("keylight ready device=" + root.deviceName + " timeout=" + root.idleTimeout)
+    if (!wasAvailable) {
+      console.log("keylight ready device=" + root.deviceName + " timeout=" + root.idleTimeout)
+      root.checkStartupState()
+    }
+  }
+
+  // A light blanked by a lock is restored by the shell's own wake process,
+  // which only has a brightnessctl save to work from; that save is a stale
+  // zero when the light was already off when the lock was taken. The helper
+  // still holds the level the user chose, so settle the two once per start.
+  function checkStartupState() {
+    if (root.startupChecked) return
+    root.startupChecked = true
+    startupLockReader.outputText = ""
+    startupLockReader.running = true
   }
 
   function enqueue(action) {
@@ -159,6 +174,19 @@ Item {
         root.restoreAfterUnlock = false
         root.enqueue("idle-restore")
       }
+    }
+  }
+
+  Process {
+    id: startupLockReader
+    command: ["omarchy-shell", "lock", "isLocked"]
+    onExited: function(exitCode) {
+      if (exitCode !== 0 || !root.autoBlanked) return
+      // The light is dark because of an automatic blank, not a deliberate off.
+      // If the lock is still up, restore when it lifts, so the shell's own
+      // wake restore runs first; if it already lifted, restore now.
+      root.restoreAfterUnlock = true
+      root.checkLockState()
     }
   }
 

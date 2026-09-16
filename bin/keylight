@@ -211,11 +211,15 @@ case "$action" in
   idle-restore)
     if saved="$(saved_idle)"; then
       current="$(current_brightness)" || exit 1
-      if (( current == 0 )); then
-        set_brightness "$saved"
-      fi
+      (( current == 0 )) && set_brightness "$saved"
+      # Unlocking runs omarchy-system-wake, which restores brightnessctl's own
+      # saved value; that value is a stale 0 whenever the light was already off
+      # when the lock was taken. Re-assert once it has settled.
+      sleep 0.15
+      current="$(current_brightness)" || exit 1
+      (( current == 0 )) && set_brightness "$saved"
+      clear_idle_marker
     fi
-    clear_idle_marker
     ;;
   idle-reset)
     clear_idle_marker
