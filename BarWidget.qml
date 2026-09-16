@@ -55,8 +55,8 @@ BarWidget {
       root.wheelAccumulator = wheel.remainder
       if (wheel.steps === 0) return
       for (var i = 0; i < Math.abs(wheel.steps); i++) {
-        if (wheel.steps > 0) root.keylight.increase()
-        else root.keylight.decrease()
+        if (wheel.steps > 0) root.keylight.decrease()
+        else root.keylight.increase()
       }
     }
   }

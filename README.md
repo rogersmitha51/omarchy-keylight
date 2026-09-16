@@ -15,7 +15,8 @@ omarchy plugin add https://github.com/rogersmitha51/omarchy-keylight.git --enabl
 ## Controls
 
 - **Left click:** Cycle brightness
-- **Scroll:** Adjust brightness
+- **Scroll/swipe up:** Increase brightness
+- **Scroll/swipe down:** Decrease brightness
 - **Middle click:** Toggle on or off
 - **Right click:** Turn off
 
