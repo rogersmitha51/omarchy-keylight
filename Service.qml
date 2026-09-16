@@ -74,9 +74,8 @@ Item {
   // zero when the light was already off when the lock was taken. The helper
   // still holds the level the user chose, so settle the two once per start.
   function checkStartupState() {
-    if (root.startupChecked) return
+    if (root.startupChecked || !root.autoBlanked) return
     root.startupChecked = true
-    startupLockReader.outputText = ""
     startupLockReader.running = true
   }
 
