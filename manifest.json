@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.rogersmitha51.keylight",
   "name": "Keylight",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "author": "rogersmitha51",
   "license": "MIT",
   "description": "Apple-style keyboard backlight behavior with inactivity blanking, activity restoration, and manual controls.",
