@@ -212,13 +212,15 @@ case "$action" in
     if saved="$(saved_idle)"; then
       current="$(current_brightness)" || exit 1
       (( current == 0 )) && set_brightness "$saved"
-      # Unlocking runs omarchy-system-wake, which restores brightnessctl's own
-      # saved value; that value is a stale 0 whenever the light was already off
-      # when the lock was taken. Re-assert once it has settled.
+      # The shell's wake process restores brightnessctl's own save, and
+      # brightnessctl's -r writes a bare 0 when nothing was ever saved, so
+      # the light can be blanked out from under keylight before or after
+      # this runs. Re-assert once the wake has settled. The marker is kept:
+      # keylight owns the lit level, so the next activity heals any later
+      # blank; only an explicit user off gives ownership up.
       sleep 0.15
       current="$(current_brightness)" || exit 1
       (( current == 0 )) && set_brightness "$saved"
-      clear_idle_marker
     fi
     ;;
   idle-reset)
@@ -229,10 +231,11 @@ case "$action" in
     if (( current > 0 )); then
       remember_last "$current"
       set_brightness 0
+      clear_idle_marker
     else
       set_brightness "$(saved_last)"
+      write_idle_marker "$(saved_last)"
     fi
-    clear_idle_marker
     ;;
   off)
     current="$(current_brightness)" || exit 1
@@ -255,7 +258,11 @@ case "$action" in
     (( next > maximum )) && next="$maximum"
     if (( next != current )); then
       set_brightness "$next"
-      clear_idle_marker
+      if (( next > 0 )); then
+        write_idle_marker "$next"
+      else
+        clear_idle_marker
+      fi
     fi
     ;;
 esac

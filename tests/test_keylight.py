@@ -97,7 +97,9 @@ fi
 
         restored = self.run_helper("idle-restore")
         self.assertEqual(self.brightness(device), 87)
-        self.assertTrue(restored.stdout.rstrip().endswith("\t0"))
+        # The restore keeps the marker: keylight still owns the lit level,
+        # so a later external blank is healed by the next activity.
+        self.assertTrue(restored.stdout.rstrip().endswith("\t1"))
 
     def test_manual_off_is_not_undone_by_activity_restore(self):
         device = self.add_device(brightness=87)
@@ -106,6 +108,37 @@ fi
         self.run_helper("idle-restore")
 
         self.assertEqual(self.brightness(device), 0)
+
+    def test_external_blank_after_restore_is_healed_by_next_activity(self):
+        device = self.add_device(brightness=87)
+
+        self.run_helper("idle-off")
+        self.run_helper("idle-restore")
+        self.assertEqual(self.brightness(device), 87)
+
+        # The shell's wake process can blank the light out from under
+        # keylight without touching its marker (brightnessctl 0.5's -r
+        # writes 0 when nothing was ever saved).
+        (device / "brightness").write_text("0\n", encoding="utf-8")
+
+        healed = self.run_helper("idle-restore")
+
+        self.assertEqual(healed.returncode, 0)
+        self.assertEqual(self.brightness(device), 87)
+        self.assertTrue(healed.stdout.rstrip().endswith("\t1"))
+
+    def test_manual_level_is_kept_as_restore_level_after_external_blank(self):
+        device = self.add_device(brightness=87)
+
+        self.run_helper("up")
+        self.assertEqual(self.brightness(device), 112)
+
+        (device / "brightness").write_text("0\n", encoding="utf-8")
+
+        healed = self.run_helper("idle-restore")
+
+        self.assertEqual(healed.returncode, 0)
+        self.assertEqual(self.brightness(device), 112)
 
     def test_manual_change_while_idle_cancels_automatic_restore(self):
         device = self.add_device(brightness=100)
